@@ -1,0 +1,2 @@
+asyncinotify~=2.0
+websockets~=10.0
