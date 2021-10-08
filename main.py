@@ -263,7 +263,6 @@ class Aria2EventListener:
 
     def _move_files(self, message: list[dict[str, str]]):
         paths = [Path(item['path']) for item in message]
-        paths = [self._download_dir/path.name for path in paths]
         self._log.info(f'moving {", ".join(str(x) for x in paths)} to destination')
         for path in paths:
             dest = self._storage_dir/path.name
