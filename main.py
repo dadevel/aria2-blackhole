@@ -261,13 +261,30 @@ class Aria2EventListener:
                 self._move_files(result)
                 self._downloads.untrack(gid)
 
-    def _move_files(self, message: list[dict[str, str]]):
+    def _move_files(self, message: list[dict[str, str]]) -> None:
         paths = [Path(item['path']) for item in message]
         self._log.info(f'moving {", ".join(str(x) for x in paths)} to destination')
         for path in paths:
             dest = self._storage_dir/path.name
             self._log.debug(f'moving {path} to {dest}')
             shutil.move(path, dest)
+        self._clean_up()
+
+    def _clean_up(self) -> None:
+        # delete empty directories
+        for path in self._download_dir.iterdir():
+            if path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError as e:
+                    # ignore "directory not empty" errors
+                    if e.errno != 39:
+                        raise
+
+        # delete .torrent files
+        for path in self._download_dir.glob('*.torrent'):
+            if path.is_file():
+                path.unlink()
 
 
 class InotifyWatcher:
