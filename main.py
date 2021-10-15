@@ -22,11 +22,7 @@ async def main() -> None:
     async with Aria2Client(config.endpoint, config.token) as aria2:
         listener = Aria2EventListener(config.download_dir, config.storage_dir, aria2, downloads)
         watcher = InotifyWatcher(config.torrent_dir, aria2, downloads)
-        tasks = [
-            listener.start(),
-            watcher.start(),
-        ]
-        await asyncio.wait(tasks)
+        await asyncio.gather(listener.start(), watcher.start())
 
 
 @dataclasses.dataclass
@@ -131,7 +127,10 @@ class Aria2Client:
         return await self.call('aria2.getVersion')
 
     async def add_torrent(self, content: bytes) -> str:
-        return await self.call('aria2.addTorrent', base64.b64encode(content).decode(), list(), dict())
+        return await self.call('aria2.addTorrent', base64.b64encode(content).decode())
+
+    async def add_magnet_uri(self, content: str) -> str:
+        return await self.call('aria2.addUri', [content])
 
     async def get_files(self, gid: str) -> list[dict[str, str]]:
         return await self.call('aria2.getFiles', gid)
@@ -265,6 +264,9 @@ class Aria2EventListener:
         paths = [Path(item['path']) for item in message]
         self._log.info(f'moving {", ".join(str(x) for x in paths)} to destination')
         for path in paths:
+            if not path.exists():
+                self._log.warning(f'can not move nonexistent path {path}')
+                continue
             dest = self._storage_dir/path.name
             self._log.debug(f'moving {path} to {dest}')
             shutil.move(path, dest)
@@ -312,19 +314,26 @@ class InotifyWatcher:
             raise
 
     async def _catch_up(self) -> None:
-        for path in self._torrent_dir.glob('**/*.torrent'):
-            await self._submit_file(path)
+        for path in self._torrent_dir.iterdir():
+            if path.is_file():
+                await self._submit_file(path)
 
     async def _step(self, event) -> None:
         self._log.debug(f'received {event}')
-        if not event.watch or not event.name or not event.name.suffix == '.torrent':
+        if not event.watch or not event.name:
             return
-        path = event.watch.path/event.name
-        await self._submit_file(path)
+        await self._submit_file(event.watch.path/event.name)
 
     async def _submit_file(self, path: Path) -> None:
-        self._log.info(f'adding torrent {path} to download queue')
-        gid = await self._aria2.add_torrent(path.read_bytes())
+        if path.name.endswith('.torrent'):
+            self._log.info(f'adding torrent {path.name} to download queue')
+            gid = await self._aria2.add_torrent(path.read_bytes())
+        elif path.name.endswith('.magnet'):
+            self._log.info(f'adding magnet {path.name} to download queue')
+            gid = await self._aria2.add_magnet_uri(path.read_text())
+        else:
+            self._log.warning(f'ignoring {path.name} with unsupported file extension')
+            return
         self._downloads.track(gid)
         path.unlink()
 
